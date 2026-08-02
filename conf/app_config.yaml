@@ -39,6 +39,6 @@ es:
   index_name: data_agent
 
 llm:
-  model_name: gpt-5.2-codex
+  model_name: deepseek-v4-flash
   api_key: <api_key>
   base_url: https://api.openai-proxy.org/v1

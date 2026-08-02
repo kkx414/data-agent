@@ -69,6 +69,7 @@ from pathlib import Path
 
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from omegaconf import OmegaConf
+from loguru import logger
 
 from app.clients.embedding_client_manager import embedding_client_manager  # noqa: F401  # 预初始化 embedding 客户端
 from app.conf.meta_config import MetaConfig
@@ -527,15 +528,18 @@ class MetaKnowledgeService:
             context = OmegaConf.load(config_path)
             schema = OmegaConf.structured(MetaConfig)
             meta_config: MetaConfig = OmegaConf.to_object(OmegaConf.merge(schema, context))
+            logger.info("保存表信息成功")
 
             # ── Step 2: 同步表信息 ─────────────────────────────────
             if meta_config.tables:
                 # 2.1 表结构 + 字段信息 → MySQL
                 column_infos = await self._save_tables_to_meta_db(meta_config)
+                logger.info("保存表信息和字段信息到数据库成功")
                 # 2.2 字段向量索引 → Qdrant
                 # 对 name、description、alias 分别生成 embedding，
                 # 存入 Qdrant column_info_collection 集合
                 await self._save_columns_to_qdrant(column_infos)
+                logger.info("为字段信息建立向量索引成功")
 
 
 
@@ -544,13 +548,16 @@ class MetaKnowledgeService:
                 # 对 sync=true 的维度字段，将其 distinct 取值写入 ES，
                 # 使用 ik_max_word 分词器支持中文搜索
                 await self._save_values_to_es(meta_config)
+                logger.info("为指定的维度字段建立全文索引成功")
 
 
             # ── Step 3: 同步指标信息 ───────────────────────────────
             if meta_config.metrics:
                 # 3.1 指标定义 + 指标-字段关联 → MySQL
                 metric_infos = await self._save_metric_to_meta_db(meta_config)
+                logger.info("保存指标信息到数据库成功")
                 # 3.2 指标向量索引 → Qdrant
                 # 对 name、description、alias 分别生成 embedding，
                 # 存入 Qdrant metric_info_collection 集合
                 await self._save_metrics_to_qdrant(metric_infos)
+                logger.info("为指标信息建立向量索引成功")
