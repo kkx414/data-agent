@@ -60,3 +60,24 @@ class DWMySQLRepository:
         # 原因：表名和列名由外部参数拼接，可能含特殊字符，
         # 用索引取值避免转义问题
         return [row[0] for row in result.fetchall()]
+
+    async def get_db_info(self):
+        sql = "select version()"
+
+        result = await self.session.execute(text(sql))
+
+        version = result.scalar()
+        dialect = self.session.bind.dialect.name
+        return {
+            'version': version,
+            'dialect': dialect,
+        }
+
+    async def validate(self, sql):
+        sql = f"explain {sql}"
+        await self.session.execute(text(sql))
+
+    async def run(self, sql) -> list[dict]:
+        result = await self.session.execute(text(sql))
+        return [dict(row) for row in result.mappings().fetchall()]
+
