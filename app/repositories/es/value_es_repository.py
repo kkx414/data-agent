@@ -44,7 +44,7 @@ class ValueESRepository:
         resp = await self.client.search(
             index=self.index_name,
             query={
-                "natch":{
+                "match":{
                     "value": keyword
                 }
             },

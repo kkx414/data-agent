@@ -23,6 +23,11 @@ async def filter_table(state: DataAgentState, runtime: Runtime[DataAgentContext]
         裁剪结果写回 table_infos，作为后续 generate_sql 的 schema 输入，
         直接决定 SQL 生成的准确性与 token 开销。
 
+    图中位置：
+        上游 merge_retrieved_info（候选表来源）；
+        下游 add_extract_context（与 filter_metric 并行执行后汇合，再进入
+        generate_sql）。
+
     state 读/写：
         - 读：query        用户原始问题
         - 读：table_infos  merge_retrieved_info 产出的候选表集合
@@ -36,41 +41,50 @@ async def filter_table(state: DataAgentState, runtime: Runtime[DataAgentContext]
         仅包含 table_infos 的 state 增量字典。
     """
     writer = runtime.stream_writer
-    writer("过滤表信息")
+    writer({"type": "progress", "step": "过滤表信息", "status": "running"})
 
     query = state["query"]
     table_infos = state["table_infos"]
 
-    # 构造 LLM 筛选链路：prompt | LLM | JSON 解析
-    # 提示词要求输出 {"表名": ["字段1", "字段2", ...]} 的 JSON 对象
-    prompt = PromptTemplate(template=load_prompt("filter_table_info"), input_variables=['query', 'table_infos'])
-    output_parser = JsonOutputParser()
-    from app.agent.llm import llm
-    chain = prompt | llm | output_parser
+    try:
+        # 构造 LLM 筛选链路：prompt | LLM | JSON 解析
+        # 提示词要求输出 {"表名": ["字段1", "字段2", ...]} 的 JSON 对象
+        prompt = PromptTemplate(template=load_prompt("filter_table_info"), input_variables=['query', 'table_infos'])
+        output_parser = JsonOutputParser()
+        from app.agent.llm import llm
+        chain = prompt | llm | output_parser
 
-    # 将候选表信息序列化为 YAML 文本喂给 LLM
-    # - allow_unicode=True: 保证中文表名/字段名正常展示
-    # - sort_keys=False:    保持表与字段的原有顺序，方便与结果对齐
-    result = await chain.ainvoke({"query": query,
-                         "table_infos": yaml.dump(table_infos, allow_unicode=True, sort_keys=False)})
+        # 将候选表信息序列化为 YAML 文本喂给 LLM
+        # - allow_unicode=True: 保证中文表名/字段名正常展示
+        # - sort_keys=False:    保持表与字段的原有顺序，方便与结果对齐
+        result = await chain.ainvoke({"query": query,
+                                      "table_infos": yaml.dump(table_infos, allow_unicode=True, sort_keys=False)})
 
-    # 按 LLM 筛选结果裁剪表与字段
-    filtered_table_infos: list[TableInfoState] = []
-    for table_info in table_infos:
-        # 表级裁剪：仅保留 LLM 选中的表（以表名为 key 匹配）
-        if table_info["name"] in result:
-            # 字段级裁剪：仅保留 LLM 选中且当前表中真实存在的字段
-            # TODO(风险): 此处直接原地修改了 state 中的 table_info['columns']，
-            #            若 LLM 选中了表但字段全部匹配不上，会得到一个
-            #            空字段的表被加入结果（与提示词"表必须含被选中字段"矛盾），
-            #            建议补充兜底：字段为空时丢弃该表。
-            table_info['columns'] = [column_info for
-                                     column_info in table_info['columns'] if column_info["name"] in result[table_info["name"]]]
-            filtered_table_infos.append(table_info)
+        # 按 LLM 筛选结果裁剪表与字段
+        filtered_table_infos: list[TableInfoState] = []
+        for table_info in table_infos:
+            # 表级裁剪：仅保留 LLM 选中的表（以表名为 key 匹配）
+            if table_info["name"] in result:
+                # 字段级裁剪：仅保留 LLM 选中且当前表中真实存在的字段
+                # TODO(风险): 此处直接原地修改了 state 中的 table_info['columns']，
+                #            若 LLM 选中了表但字段全部匹配不上，会得到一个
+                #            空字段的表被加入结果（与提示词"表必须含被选中字段"矛盾），
+                #            建议补充兜底：字段为空时丢弃该表。
+                table_info['columns'] = [column_info for
+                                         column_info in table_info['columns'] if column_info["name"] in result[table_info["name"]]]
+                filtered_table_infos.append(table_info)
 
-    # TODO(风险): 若 LLM 未选中任何表（result 为空或解析失败），filtered_table_infos
-    #            会为空，导致下游 generate_sql 拿不到任何 schema。建议空结果时
-    #            回退保留原候选表并告警，避免截断链路。
+        # TODO(风险): 若 LLM 未选中任何表（result 为空或解析失败），filtered_table_infos
+        #            会为空，导致下游 generate_sql 拿不到任何 schema。建议空结果时
+        #            回退保留原候选表并告警，避免截断链路。
 
-    logger.info(f"过滤后的表信息: {[filtered_table_info['name'] for filtered_table_info in filtered_table_infos]}")
-    return {"table_infos": filtered_table_infos}
+        logger.info(f"过滤后的表信息: {[filtered_table_info['name'] for filtered_table_info in filtered_table_infos]}")
+
+        writer({"type": "progress", "step": "过滤表信息", "status": "success"})
+        logger.info("过滤表信息成功")
+        return {"table_infos": filtered_table_infos}
+
+    except Exception as e:
+        logger.info(f"过滤表信息失败：{e}")
+        writer({"type": "progress", "step": "过滤表信息", "status": "error"})
+        raise

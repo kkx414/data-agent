@@ -14,7 +14,7 @@ class MetricQdrantRepository:
     async def ensure_collection(self, columns: dict):
         if not await self.client.collection_exists(self.collection_name):
             await self.client.create_collection(
-                collection_name="collection_name",
+                collection_name="metric_info_collection",
                 vectors_config=VectorParams(size=app_config.qdrant.embedding_size, distance=Distance.COSINE)
             )
 

@@ -57,7 +57,7 @@ async def build(config_path: Path):
         meta_knowledge_service = MetaKnowledgeService(meta_mysql_repository=meta_mysql_repository,
                                                       dw_mysql_repository=dw_mysql_repository,
                                                       column_qdrant_repository=column_qdrant_repository,
-                                                      embedding_client=embedding_client_manager,
+                                                      embedding_client=embedding_client_manager.client,
                                                       value_es_repository=value_es_repository,
                                                       metric_qdrant_repository=metric_qdrant_repository)
 
